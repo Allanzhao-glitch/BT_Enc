@@ -1,0 +1,7 @@
+[project]
+name = "bt-enc"
+version = "1.0.0"
+description = "基于ECDH密钥交换和AES-256-GCM加密的蓝牙安全通讯实现"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["cryptography>=41.0.0", "bleak>=0.21.0"]

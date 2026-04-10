@@ -219,7 +219,7 @@ class EncryptionProtocol:
         # 返回十六进制字符串(str类型)
         return ciphertext.hex()
 
-    def aes256_cbc_decrypt(self, hex_ciphertext: str) -> bytes:
+    def aes256_cbc_decrypt(self, hex_ciphertext: str | bytes) -> bytes:
         """
         AES-256 CBC模式解密
 
@@ -229,9 +229,11 @@ class EncryptionProtocol:
         Returns:
             明文字节
         """
-        # 十六进制解码
+        # 十六进制解码 (支持str或bytes输入)
+        if isinstance(hex_ciphertext, bytes):
+            hex_ciphertext = hex_ciphertext.decode("ascii")
         ciphertext = bytes.fromhex(hex_ciphertext)
-
+        print(f"解密输入ciphertext: {ciphertext}")
         cipher = Cipher(algorithms.AES(self.STATIC_KEY), modes.CBC(self.STATIC_IV), backend=default_backend())
         decryptor = cipher.decryptor()
 
@@ -254,9 +256,11 @@ class EncryptionProtocol:
             共享密钥
         """
         logger.info("[OK] 计算共享密钥...")
+        logger.info(f"[OK] 对端公钥: {peer_public_key_bytes.hex()}")
 
-        # 加载对端公钥
-        peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), peer_public_key_bytes)
+        # 使用 SECP256R1 曲线和 from_encoded_point
+        curve = ec.SECP256R1()
+        peer_public_key = ec.EllipticCurvePublicKey.from_encoded_point(curve, peer_public_key_bytes)
 
         # 计算共享密钥
         shared_key = self.private_key.exchange(ec.ECDH(), peer_public_key)
@@ -387,6 +391,8 @@ class KeyMatchHeader:
         data_bytes = raw_data[cls.HEADER_SIZE :]
         # data_str = data_bytes.decode("ascii", errors="replace")
         data_str = data_bytes
+        data_str = data_bytes.decode("ascii", errors="replace")
+        # data_str = data_bytes
 
         return cls(client_pub_len, PairStage(is_change), data_str)
 
@@ -563,7 +569,9 @@ class BluetoothCryptoClient:
             # 解密服务器公钥
             # 注意: C服务器发送的data字段本身就是hex字符串(ASCII编码)
             # 所以直接使用,不需要再次hex编码
+            print(f"服务器响应data字段(ASCII): {packet.data}")
             server_public_key = self.crypto.aes256_cbc_decrypt(packet.data)
+            logger.info(f"服务器公钥server_public_key: {server_public_key}")
             self.crypto.peer_public_key = server_public_key
 
             logger.info(f"服务器公钥: {server_public_key.hex()}")
@@ -616,12 +624,24 @@ class BluetoothCryptoClient:
         # GCM加密
         encrypted_bytes = self.crypto.aes256_gcm_encrypt(plaintext)
 
-        # 构造数据包
-        packet = EncryptedDataHeader(data_len=len(encrypted_bytes), tag_len=16, data=encrypted_bytes.hex())
+        # AESGCM.encrypt 返回 ciphertext + tag (tag 是最后16字节)
+        ciphertext = encrypted_bytes[:-16]
+        tag = encrypted_bytes[-16:]
+
+        # 构造数据包 (分别发送密文和tag的hex字符串)
+        packet = EncryptedDataHeader(
+            data_len=len(ciphertext.hex()),  # 密文hex字符串的长度
+            tag_len=32,  # tag的hex字符串长度 (16字节*2=32)
+            data=ciphertext.hex() + tag.hex()  # 密文hex + taghex
+        )
 
         data = packet.pack()
         logger.info(f"明文: {plaintext.hex()}")
+        logger.info(f"密文(hex): {ciphertext.hex()}")
+        logger.info(f"Tag(hex): {tag.hex()}")
         logger.info(f"加密数据长度: {len(data)} 字节")
+        logger.info(f"加密数据包头(hex): {data[:20].hex()}")
+        logger.info(f"  data_len={packet.data_len}, tag_len={packet.tag_len}")
 
         return data
 

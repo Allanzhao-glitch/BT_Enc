@@ -629,13 +629,18 @@ class BluetoothCryptoClient:
         tag = encrypted_bytes[-16:]
 
         # 构造数据包 (分别发送密文和tag的hex字符串)
+        # 注意: data_len 和 tag_len 应该是 hex 字符串长度，车端用 data_len / 2 得到字节长度
         packet = EncryptedDataHeader(
-            data_len=len(ciphertext.hex()),  # 密文hex字符串的长度
-            tag_len=32,  # tag的hex字符串长度 (16字节*2=32)
+            data_len=len(ciphertext.hex()),  # hex字符串长度 (41 * 2 = 82)
+            tag_len=len(tag.hex()),  # tag的hex字符串长度 (16 * 2 = 32)
             data=ciphertext.hex() + tag.hex()  # 密文hex + taghex
         )
 
         data = packet.pack()
+        logger.info(f"加密数据包: {data.hex()}")
+        logger.info(f"加密数据包头(前16字节): {data[:16].hex()}")
+        logger.info(f"  头4字节(data_len): {data[:4].hex()} = {int.from_bytes(data[:4], 'little')}")
+        logger.info(f"  头4-8字节(tag_len): {data[4:8].hex()} = {int.from_bytes(data[4:8], 'little')}")
         logger.info(f"明文: {plaintext.hex()}")
         logger.info(f"密文(hex): {ciphertext.hex()}")
         logger.info(f"Tag(hex): {tag.hex()}")
@@ -674,12 +679,13 @@ class BluetoothCryptoClient:
         # 解析加密数据包
         packet = EncryptedDataHeader.unpack(encrypted_data)
 
-        # 提取密文和标签
-        ciphertext = packet.data[: packet.data_len]
-        tag = packet.data[packet.data_len : packet.data_len + packet.tag_len]
+        # 提取密文和标签 (packet.data 是 hex 字符串)
+        # data_len 是 hex 字符串长度，直接使用
+        ciphertext_hex = packet.data[: packet.data_len]  # hex 字符串
+        tag_hex = packet.data[packet.data_len : packet.data_len + packet.tag_len]  # hex 字符串
 
-        # GCM解密
-        plaintext = self.crypto.aes256_gcm_decrypt(ciphertext, tag)
+        # GCM解密 (需要 hex 字符串)
+        plaintext = self.crypto.aes256_gcm_decrypt(ciphertext_hex, tag_hex)
 
         logger.info(f"[OK] 明文: {plaintext.hex()}")
 

@@ -16,7 +16,6 @@ from enum import StrEnum
 from bleak import BleakClient, BleakGATTCharacteristic, BleakScanner
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakCharacteristicNotFoundError, BleakError
-
 from bluetooth_crypto import BluetoothCryptoClient
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(asctime)s %(filename)s|%(lineno)d: %(message)s")
@@ -748,14 +747,13 @@ class BluetoothSecureClient:
                 frag_ctrl = frame_ctrl
 
             # 构建分片载荷: [总长度(2字节,小端序)] + [分片数据]
-            if has_more_frags or frag_index > 0:
-                # 分片包需要包含总长度字段
-                total_len = current_frag_data_size + remaining - current_frag_data_size
-                if frag_index == 0:
-                    total_len = data_len  # 第一个分片包含完整的总长度
+            # 只有第一个分片需要包含总长度字段
+            if frag_index == 0:
+                # 第一个分片需要包含总长度字段
+                total_len = data_len  # 完整数据长度
                 frag_payload = struct.pack("<H", total_len) + frag_data
             else:
-                # 单个完整包，不需要总长度字段
+                # 后续分片不需要总长度字段
                 frag_payload = frag_data
 
             payload_len = len(frag_payload)
@@ -1209,11 +1207,20 @@ class BluetoothSecureClient:
                 if i < len(blufi_confirm_packets) - 1:
                     await asyncio.sleep(0.02)
 
+            # 获取第3次握手使用的序列号
+            handshake3_seq = blufi_seq
+            logger.info(f"[DEBUG] 第3次握手使用的序列号: {handshake3_seq}")
+
             self.handshake_completed = True
 
-            # 重置BluFi序列号，从0开始（服务器期望seq=1）
-            self.blufi_seq = 0  # 这样get_next_blufi_seq()会返回1
-            self.blufi_expected_seq = 1
+            # 重置BluFi序列号
+            # 服务器期望下一个是 seq=2
+            # get_next_blufi_seq() 是先返回当前值再递增
+            # 所以需要将序列号设置为 2，这样下一个 get_next_blufi_seq() 返回 2
+            self.blufi_seq = 2  # 下一个 get_next_blufi_seq() 返回 2
+            self.blufi_expected_seq = 2
+
+            logger.info(f"[!] BluFi序列号已重置，blufi_seq={self.blufi_seq}，下一个序列号将为 {self.blufi_seq}")
 
             logger.info("\n" + "=" * 60)
             logger.info("密钥交换握手完成!")
@@ -1263,6 +1270,7 @@ class BluetoothSecureClient:
 
             # 使用BluFi协议封装 (支持分片)
             blufi_seq = self.get_next_blufi_seq()
+            logger.info(f"[DEBUG] 发送加密数据 - 当前序列号: {blufi_seq}, blufi_seq状态: {self.blufi_seq}")
             blufi_packets = self.create_blufi_packet(
                 encrypted,
                 blufi_seq,

@@ -1312,6 +1312,14 @@ class BluetoothSecureClient:
                 if fragment < len(blufi_packets) - 1:
                     await asyncio.sleep(0.05)
 
+            # 更新 blufi_seq 为下一个可用序列号
+            # 获取最后一个分片的序列号，然后 +1
+            if blufi_packets:
+                last_packet = blufi_packets[-1]
+                last_seq = last_packet[2]
+                self.blufi_seq = (last_seq + 1) % 256
+                logger.debug(f"[DEBUG] 发送完成，更新 blufi_seq 为: {self.blufi_seq}")
+
             logger.info("[OK] 发送加密数据成功")
 
             return True

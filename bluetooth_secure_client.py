@@ -1008,13 +1008,10 @@ class BluetoothSecureClient:
         # KeyMatchHeader 格式: [client_pub_len(1字节)][is_change(1字节)][data(变长)]
         if len(self.receive_buffer) >= 2:
             # 读取预期数据长度
-            client_pub_len = self.receive_buffer[2] if len(self.receive_buffer) >= 4 else 0
             is_change = self.receive_buffer[1]
             if is_change == 0x14:  # PAIR_STAGE_STATUS_SUCC
                 # 第2次握手响应: 2字节头部 + 64字节hex字符串 = 66字节
                 expected_length = 66
-                # 握手响应总长度 = HEADER_SIZE(4字节) + 密文长度
-                expected_length = 4 + client_pub_len
                 if len(self.receive_buffer) >= expected_length:
                     logger.info(f"[OK] 接收完整握手响应: {len(self.receive_buffer)} 字节")
                     self.receive_complete = True
@@ -1148,7 +1145,6 @@ class BluetoothSecureClient:
             # 包类型使用 0x4D (握手和通讯都使用相同类型)
             blufi_seq = self.get_next_blufi_seq()
             blufi_packets = self.create_blufi_packet(request, blufi_seq, packet_type=0x4D)
-            self.blufi_seq = (self.blufi_seq + len(blufi_packets)) % 256
 
             logger.info("[→] 发送握手请求:")
             logger.info(f"    KeyMatchHeader: {len(request)} 字节")
@@ -1193,7 +1189,6 @@ class BluetoothSecureClient:
             # 握手确认也需要 BluFi 封装,包类型使用 0x4D
             blufi_seq = self.get_next_blufi_seq()
             blufi_confirm_packets = self.create_blufi_packet(confirm, blufi_seq, packet_type=0x4D)
-            self.blufi_seq = (self.blufi_seq + len(blufi_confirm_packets)) % 256
 
             logger.info("[→] 发送确认:")
             logger.info(f"    确认数据: {len(confirm)} 字节")
@@ -1216,9 +1211,16 @@ class BluetoothSecureClient:
 
             self.handshake_completed = True
 
+            # 重置BluFi序列号，从0开始（服务器期望seq=1）
+            self.blufi_seq = 0  # 这样get_next_blufi_seq()会返回1
+            self.blufi_expected_seq = 1
+
             logger.info("\n" + "=" * 60)
             logger.info("密钥交换握手完成!")
             logger.info("=" * 60 + "\n")
+
+            # 等待服务器准备好接收加密数据
+            await asyncio.sleep(0.2)
 
             return True
 
@@ -1252,9 +1254,10 @@ class BluetoothSecureClient:
             # 获取最大分片大小 (自动根据 MTU 计算)
             max_frag_size = self.get_max_fragment_size()
 
-            # 设置 Frame Control (如果需要 ACK，设置 Bit 3)
-            # 注意：加密在应用层完成，BluFi 层的加密标志可能不需要
-            frame_ctrl = 0x00
+            # 设置 Frame Control
+            # Bit 0: 加密标志 (必须设置！)
+            # Bit 3: 需要应答
+            frame_ctrl = 0x01  # 加密标志
             if require_ack:
                 frame_ctrl |= 0x08  # Bit 3: Require ACK
 
@@ -1267,18 +1270,18 @@ class BluetoothSecureClient:
                 frame_ctrl=frame_ctrl,
                 max_fragment_size=max_frag_size,
             )
-            self.blufi_seq = (self.blufi_seq + len(blufi_packets)) % 256
 
             logger.info("[→] 发送加密数据:")
             logger.info(f"    明文: {len(data)} 字节")
             logger.info(f"    加密后: {len(encrypted)} 字节")
+            logger.info(f"    加密数据(hex): {encrypted.hex()}")
             logger.info(f"    最大分片: {max_frag_size} 字节")
             logger.info(f"    BluFi包数量: {len(blufi_packets)} (起始seq={blufi_seq})")
             logger.info(f"    需要ACK: {'是' if require_ack else '否'}")
 
             # 发送所有分片 (参考 pyBlufi 的延迟策略)
             for fragment, blufi_packet in enumerate(blufi_packets):
-                current_seq = self.get_next_blufi_seq()
+                # 从包中提取序列号，不应再调用 get_next_blufi_seq()
                 current_seq = blufi_packet[2]
                 logger.info(f"    发送分片 #{fragment}: {len(blufi_packet)} 字节, seq={current_seq}")
 

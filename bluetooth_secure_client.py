@@ -746,14 +746,12 @@ class BluetoothSecureClient:
                 # 最后一个分片,不设置分片标志
                 frag_ctrl = frame_ctrl
 
-            # 构建分片载荷: [总长度(2字节,小端序)] + [分片数据]
-            # 只有第一个分片需要包含总长度字段
-            if frag_index == 0:
-                # 第一个分片需要包含总长度字段
-                total_len = data_len  # 完整数据长度
+            # 对齐 msgbus.blufibus.post_contain_data:
+            # 每个 has_frag=True 的分片都带 2 字节 total_len
+            if has_more_frags:
+                total_len = data_len
                 frag_payload = struct.pack("<H", total_len) + frag_data
             else:
-                # 后续分片不需要总长度字段
                 frag_payload = frag_data
 
             payload_len = len(frag_payload)

@@ -23,12 +23,36 @@ async def main(device_name: str = "YourDeviceName"):
                     await client.send_encrypted_data(cmd_data)
                     print("[OK] 开灯命令已发送")
 
+                    # 等待并接收设备响应
+                    print("[←] 等待设备响应...")
+                    try:
+                        response = await client.receive_encrypted_data(timeout=5.0)
+                        if response:
+                            print(f"[←] 收到响应: {len(response)} 字节")
+                            print(f"[←] 响应数据(hex): {response.hex()}")
+                        else:
+                            print("[!] 未收到响应")
+                    except Exception as e:
+                        print(f"[!] 接收响应失败: {e}")
+
                     await asyncio.sleep(2)
 
                     print("[→] 发送关灯命令...")
                     cmd_data = light_ctrl(hex_data="1").create_msg()
                     await client.send_encrypted_data(cmd_data)
                     print("[OK] 关灯命令已发送")
+
+                    # 等待并接收设备响应
+                    print("[←] 等待设备响应...")
+                    try:
+                        response = await client.receive_encrypted_data(timeout=5.0)
+                        if response:
+                            print(f"[←] 收到响应: {len(response)} 字节")
+                            print(f"[←] 响应数据(hex): {response.hex()}")
+                        else:
+                            print("[!] 未收到响应")
+                    except Exception as e:
+                        print(f"[!] 接收响应失败: {e}")
                 else:
                     print("[X] 密钥交换失败")
         else:

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 from bluetooth_secure_client import BluetoothSecureClient
 from msgbus import Message, crc16
-from msgbus.pb import Luba_msg_pb2, mctrl_sys_pb2
+from msgbus.pb import Luba_msg_pb2, mctrl_sys_pb2, dev_net_pb2
 
 logging.basicConfig(
     level=logging.INFO,
@@ -123,14 +123,36 @@ def build_battery_level_mow_info_request() -> bytes:
     luba_msg.msgtype = Luba_msg_pb2.MSG_CMD_TYPE_EMBED_SYS
     luba_msg.sender = Luba_msg_pb2.DEV_MOBILEAPP
     luba_msg.rcver = Luba_msg_pb2.DEV_MAINCTL
-    luba_msg.msgattr = Luba_msg_pb2.MSG_ATTR_NONE
+    # Align with app-side protobuf bridge behavior in mammotionkit/system_io.
+    luba_msg.msgattr = 1
     luba_msg.seqs = 1
     luba_msg.version = 1
+    luba_msg.subtype = 3691
     luba_msg.timestamp = 1
 
     ctrl_sys = mctrl_sys_pb2.MctlSys()
     ctrl_sys.todev_mow_info_up = 1
     luba_msg.sys.CopyFrom(ctrl_sys)
+    return luba_msg.SerializeToString()
+
+def build_ble_sync_request(sync_value: int = 2) -> bytes:
+    """
+    Warm up app channel like mammotion flow:
+    DevNet.todev_ble_sync = 2.
+    """
+    luba_msg = Luba_msg_pb2.LubaMsg()
+    luba_msg.msgtype = Luba_msg_pb2.MSG_CMD_TYPE_ESP
+    luba_msg.sender = Luba_msg_pb2.DEV_MOBILEAPP
+    luba_msg.rcver = Luba_msg_pb2.DEV_MAINCTL
+    luba_msg.msgattr = 1
+    luba_msg.seqs = 1
+    luba_msg.version = 1
+    luba_msg.subtype = 3691
+    luba_msg.timestamp = 1
+
+    net = dev_net_pb2.DevNet()
+    net.todev_ble_sync = sync_value
+    luba_msg.net.CopyFrom(net)
     return luba_msg.SerializeToString()
 
 
@@ -252,42 +274,18 @@ async def run(
             logger.error("crypto handshake failed")
             return 3
 
-        if payload_mode == "protobuf":
-            if request_type == "mow_info":
-                request = build_battery_level_mow_info_request()
-                logger.info("send battery query protobuf(todev_mow_info_up=1), len=%s", len(request))
-            elif request_type == "record":
-                maintenace = get_RecordInfo()
-                logger.info("get_RecordInfo, len=%s", len(maintenace))
-            else:
-                request = build_battery_query_protobuf(cmd_sub=cmd_sub, recv_dev_id=1, outer_rcver=outer_rcver)
-                logger.info(
-                    "send battery query protobuf(to_dev_msgbus) cmd=130 cmd_sub=%s, outer_rcver=%s, len=%s",
-                    cmd_sub,
-                    outer_rcver,
-                    len(request),
-                )
-        else:
+        # Keep close to mammotionkit behavior: feed BLE channel heartbeat once.
+        warmup = build_ble_sync_request(sync_value=2)
+        logger.info("send warmup protobuf(todev_ble_sync=2), len=%s", len(warmup))
+        await client.send_encrypted_data(warmup, require_ack=False)
+        await asyncio.sleep(0.2)
+
+        if payload_mode != "protobuf":
             request = Message(7, 13).set_cmd(130).set_cmd_sub(cmd_sub).create()
             logger.info("send battery query raw-msgbus cmd=130 cmd_sub=%s, len=%s", cmd_sub, len(request))
-
-        if not await client.send_encrypted_data(request, require_ack=False):
-            logger.error("send encrypted battery query failed")
-            return 4
-
-        if payload_mode == "protobuf":
-            decrypted, parsed = await wait_protobuf_response(
-                client=client,
-                cmd_sub=cmd_sub,
-                timeout=timeout,
-                request_type=request_type,
-            )
-            if not decrypted:
-                logger.error("no matched protobuf response within timeout")
-                return 5
-            logger.info("matched protobuf response len=%s", len(decrypted))
-            logger.info("battery parsed(protobuf bridge): %s", parsed)
-        else:
+            if not await client.send_encrypted_data(request, require_ack=False):
+                logger.error("send encrypted battery query failed")
+                return 4
             decrypted = await client.receive_encrypted_data(timeout=timeout)
             if not decrypted:
                 logger.error("no decrypted response")
@@ -310,8 +308,41 @@ async def run(
                 logger.info("battery parsed json: %s", json.dumps(obj, ensure_ascii=False, indent=2))
             except Exception:
                 logger.info("battery parsed string: %s", text)
+            return 0
 
-        return 0
+        # protobuf mode: try request path and fallback path for firmware differences.
+        attempts: list[tuple[str, bytes, str]] = []
+        if request_type == "mow_info":
+            attempts.append(("mow_info", build_battery_level_mow_info_request(), "mow_info"))
+            # Some builds don't directly respond to todev_mow_info_up; fallback to msgbus bridge.
+            attempts.append(("msgbus_bridge_fallback", build_battery_query_protobuf(cmd_sub=cmd_sub, recv_dev_id=1, outer_rcver=31), "msgbus_bridge"))
+        elif request_type == "record":
+            maintenace = get_RecordInfo()
+            logger.info("get_RecordInfo, len=%s", len(maintenace))
+        else:
+            attempts.append(("msgbus_bridge", build_battery_query_protobuf(cmd_sub=cmd_sub, recv_dev_id=1, outer_rcver=outer_rcver), "msgbus_bridge"))
+            if outer_rcver == 13:
+                attempts.append(("msgbus_bridge_alt_rcver31", build_battery_query_protobuf(cmd_sub=cmd_sub, recv_dev_id=1, outer_rcver=31), "msgbus_bridge"))
+
+        for idx, (label, request, wait_type) in enumerate(attempts, start=1):
+            logger.info("attempt %s/%s: send protobuf %s, len=%s", idx, len(attempts), label, len(request))
+            if not await client.send_encrypted_data(request, require_ack=False):
+                logger.warning("attempt %s send failed: %s", idx, label)
+                continue
+            decrypted, parsed = await wait_protobuf_response(
+                client=client,
+                cmd_sub=cmd_sub,
+                timeout=max(8.0, timeout / max(1, len(attempts))),
+                request_type=wait_type,
+            )
+            if decrypted:
+                logger.info("matched protobuf response len=%s, attempt=%s(%s)", len(decrypted), idx, label)
+                logger.info("battery parsed(protobuf): %s", parsed)
+                return 0
+            logger.warning("attempt %s no matched response: %s", idx, label)
+
+        logger.error("no matched protobuf response within timeout")
+        return 5
     finally:
         await client.disconnect()
 

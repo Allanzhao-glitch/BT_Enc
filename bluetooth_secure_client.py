@@ -1260,9 +1260,10 @@ class BluetoothSecureClient:
             max_frag_size = self.get_max_fragment_size()
 
             # 设置 Frame Control
-            # Bit 0: 加密标志 (必须设置！)
-            # Bit 3: 需要应答
-            frame_ctrl = 0x01  # 加密标志
+            # 参考 mammotionkit: 0x20 = 加密 + Data Type
+            # Bit 0: 加密标志
+            # Bit 5: Data Type (1=Data)
+            frame_ctrl = 0x20  # 加密 + Data Type (参考 mammotionkit)
             if require_ack:
                 frame_ctrl |= 0x08  # Bit 3: Require ACK
 

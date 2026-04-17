@@ -1,0 +1,1 @@
+python D:\Code\BT_Enc\ble_mowinfo_query.py --device Luba-VAG56M9R --timeout 30     #拿到电池指令

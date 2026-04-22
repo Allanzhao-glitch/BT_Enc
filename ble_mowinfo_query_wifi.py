@@ -1,4 +1,3 @@
-﻿#!/usr/bin/env python3
 """BLE encrypted Wi-Fi scan query using per-function data handlers."""
 
 from __future__ import annotations
@@ -223,26 +222,26 @@ async def run(device_name: str, timeout: float) -> int:
             return 4
         await asyncio.sleep(0.2)
 
-        while True:
-            await asyncio.sleep(10.0)
-            raw_new_wifi = await query_wifi_list(client, timeout=timeout)
-            if raw_new_wifi is None:
-                logger.error("no matched protobuf response within timeout")
-                return 6
 
-            logger.info("wifi parsed(protobuf): %r", raw_new_wifi)
-            new_wifi = [wifi.ssid for wifi in raw_new_wifi] if raw_new_wifi else []
-            logger.info("wifi ssids: %r", new_wifi)
 
-        # raw_added_wifi = await query_added_wifi(client, timeout=timeout)
-        # if raw_added_wifi is None:
-        #     logger.error("no matched protobuf response within timeout")
-        #     return 6
+        raw_new_wifi = await query_wifi_list(client, timeout=timeout)
+        if raw_new_wifi is None:
+            logger.error("no matched protobuf response within timeout")
+            return 6
 
-        # logger.info("wifi parsed(protobuf): %r", raw_added_wifi)
-        # added_wifi = [wifi.Memssid for wifi in raw_added_wifi] if raw_added_wifi else []
+        logger.info("wifi parsed(protobuf): %r", raw_new_wifi)
+        new_wifi = [wifi.ssid for wifi in raw_new_wifi] if raw_new_wifi else []
+        logger.info("wifi ssids: %r", new_wifi)
+
+        raw_added_wifi = await query_added_wifi(client, timeout=timeout)
+        if raw_added_wifi is None:
+            logger.error("no matched protobuf response within timeout")
+            return 6
+
+        logger.info("wifi parsed(protobuf): %r", raw_added_wifi)
+        added_wifi = [wifi.Memssid for wifi in raw_added_wifi] if raw_added_wifi else []
     
-        # logger.info("wifi ssids: %r", added_wifi)
+        logger.info("wifi ssids: %r", added_wifi)
         # raw_connect_new_wifi = await connect_new_wifi(client, ssid="mammotion2.4G", password="mammotion888.",  timeout=timeout)
         # if raw_connect_new_wifi is None:
         #     logger.error("no matched protobuf response within timeout")

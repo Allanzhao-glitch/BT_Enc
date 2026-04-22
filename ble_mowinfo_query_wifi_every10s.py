@@ -45,11 +45,19 @@ def build_wifi_scan_request() -> bytes:
     msg = _build_base_msg(Luba_msg_pb2.MSG_CMD_TYPE_ESP, Luba_msg_pb2.DEV_MAINCTL)
     net = dev_net_pb2.DevNet()
     req = dev_net_pb2.DrvWifiscanReq()
+    req.version = dev_net_pb2.SCAN_VERSION_Default
     req.bizid = int(time.time())
     net.todev_wifiscan.CopyFrom(req)
     msg.net.CopyFrom(net)
     return msg.SerializeToString()
 
+def build_local_connect_request() -> bytes:
+    msg = _build_base_msg(Luba_msg_pb2.MSG_CMD_TYPE_ESP, Luba_msg_pb2.DEV_MAINCTL)
+    net = dev_net_pb2.DevNet()
+    req = dev_net_pb2.DrvWifiList()
+    net.todev_WifiListUpload.CopyFrom(req)
+    msg.net.CopyFrom(net)
+    return msg.SerializeToString()
 
 async def _send_encrypted_or_fail(client: BluetoothSecureClient, payload: bytes, what: str) -> bool:
     logger.info("send %s, len=%s", what, len(payload))

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""BLE Wi-Fi scan loop: run a scan every N seconds (default 10s)."""
+"""BLE Wi-Fi scan loop.
+
+Behavior:
+- Wait up to 10s for each scan response.
+- If timeout: send heartbeat to keep link alive, then start next scan cycle.
+- If response received: wait 10s, then scan again.
+"""
 
 from __future__ import annotations
 
@@ -51,6 +57,7 @@ def build_wifi_scan_request() -> bytes:
     msg.net.CopyFrom(net)
     return msg.SerializeToString()
 
+
 def build_local_connect_request() -> bytes:
     msg = _build_base_msg(Luba_msg_pb2.MSG_CMD_TYPE_ESP, Luba_msg_pb2.DEV_MAINCTL)
     net = dev_net_pb2.DevNet()
@@ -58,6 +65,7 @@ def build_local_connect_request() -> bytes:
     net.todev_WifiListUpload.CopyFrom(req)
     msg.net.CopyFrom(net)
     return msg.SerializeToString()
+
 
 async def _send_encrypted_or_fail(client: BluetoothSecureClient, payload: bytes, what: str) -> bool:
     logger.info("send %s, len=%s", what, len(payload))
@@ -129,7 +137,11 @@ async def query_wifi_list(client: BluetoothSecureClient, timeout: float):
     return await _wait_with_data_handler(client, timeout, data_handle, "query_wifi_list")
 
 
-async def run(device_name: str, timeout: float, interval: float) -> int:
+async def run(
+    device_name: str,
+    reply_timeout: float,
+    success_interval: float,
+) -> int:
     client = BluetoothSecureClient(device_name=device_name)
 
     if not await client.search_device(timeout=10):
@@ -144,36 +156,27 @@ async def run(device_name: str, timeout: float, interval: float) -> int:
             logger.error("crypto handshake failed")
             return 3
 
-        # warmup = build_ble_sync_request(sync_value=2)
-        # if not await _send_encrypted_or_fail(client, warmup, "warmup protobuf(todev_ble_sync=2)"):
-        #     return 4
-        # await asyncio.sleep(0.2)
-
         loop_count = 0
-        next_trigger = time.monotonic()
         while True:
             warmup = build_ble_sync_request(sync_value=2)
             if not await _send_encrypted_or_fail(client, warmup, "warmup protobuf(todev_ble_sync=2)"):
                 return 4
             await asyncio.sleep(0.2)
-            now = time.monotonic()
-            sleep_s = next_trigger - now
-            if sleep_s > 0:
-                await asyncio.sleep(sleep_s)
 
             loop_count += 1
-            trigger_at = time.monotonic()
-            next_trigger += interval
-            # Keep fixed-clock triggering even if a previous scan took too long.
-            while next_trigger <= trigger_at:
-                next_trigger += interval
-
-            raw_new_wifi = await query_wifi_list(client, timeout=timeout)
+            raw_new_wifi = await query_wifi_list(client, timeout=reply_timeout)
             if raw_new_wifi is None:
-                logger.error("scan #%s no matched protobuf response within timeout", loop_count)
+                logger.error("scan #%s no matched protobuf response within %.1fs", loop_count, reply_timeout)
+                heartbeat = build_ble_sync_request(sync_value=2)
+                await _send_encrypted_or_fail(
+                    client,
+                    heartbeat,
+                    "timeout-keepalive protobuf(todev_ble_sync=2)",
+                )
             else:
                 ssids = [wifi.ssid for wifi in raw_new_wifi] if raw_new_wifi else []
                 logger.info("scan #%s ssids: %r", loop_count, ssids)
+                await asyncio.sleep(success_interval)
     finally:
         await client.disconnect()
 
@@ -181,10 +184,18 @@ async def run(device_name: str, timeout: float, interval: float) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Luba BLE Wi-Fi scan loop")
     parser.add_argument("--device", required=True, help="BLE device name, e.g. Luba-XXXX")
-    parser.add_argument("--timeout", type=float, default=30.0, help="response timeout seconds")
-    parser.add_argument("--interval", type=float, default=10.0, help="scan interval seconds")
+    parser.add_argument("--timeout", type=float, default=10.0, help="wait this long for one scan response")
+    parser.add_argument("--interval", type=float, default=10.0, help="next scan delay after a successful response")
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(device_name=args.device, timeout=args.timeout, interval=args.interval)))
+    raise SystemExit(
+        asyncio.run(
+            run(
+                device_name=args.device,
+                reply_timeout=args.timeout,
+                success_interval=args.interval,
+            )
+        )
+    )
 
 
 if __name__ == "__main__":

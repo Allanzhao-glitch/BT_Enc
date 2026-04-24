@@ -83,3 +83,5 @@ radar/
 #日志文件
 *.txt
 
+read.shell
+

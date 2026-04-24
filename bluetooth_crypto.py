@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import struct
+import string
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
 from typing import Tuple
@@ -667,16 +668,29 @@ class BluetoothCryptoClient:
             raise ValueError("未完成配对,无法接收加密数据")
 
         # 检查是否是protobuf数据(设备信息)
-        if len(encrypted_data) >= 2:
-            header_byte2 = encrypted_data[1]
+        if len(encrypted_data) < EncryptedDataHeader.HEADER_SIZE:
+            logger.warning("[!] received data too short for encrypted header; treat as plaintext protobuf")
+            logger.info(f"[!] raw data: {encrypted_data.hex()}")
+            raise ValueError("received plaintext protobuf, not encrypted response")
 
-            # 如果是KeyMatchHeader格式(0x04 = 设备信息)
-            if header_byte2 == 0x04:
-                logger.warning("[!] 收到的是protobuf设备信息,不是加密数据")
-                logger.info(f"[!] 原始数据: {encrypted_data.hex()}")
-                raise ValueError("收到protobuf设备信息,不是加密响应")
+        data_len, tag_len = struct.unpack(
+            EncryptedDataHeader.FORMAT,
+            encrypted_data[: EncryptedDataHeader.HEADER_SIZE],
+        )
+        expected_total = EncryptedDataHeader.HEADER_SIZE + data_len + tag_len
+        payload = encrypted_data[EncryptedDataHeader.HEADER_SIZE :]
+        hex_chars = set(string.hexdigits.encode("ascii"))
+        looks_like_encrypted = (
+            data_len > 0
+            and tag_len > 0
+            and len(encrypted_data) == expected_total
+            and all(ch in hex_chars for ch in payload)
+        )
+        if not looks_like_encrypted:
+            logger.warning("[!] received packet not matching encrypted header format; treat as plaintext protobuf")
+            logger.info(f"[!] raw data: {encrypted_data.hex()}")
+            raise ValueError("received plaintext protobuf, not encrypted response")
 
-        # 解析加密数据包
         packet = EncryptedDataHeader.unpack(encrypted_data)
 
         # 提取密文和标签 (packet.data 是 hex 字符串)

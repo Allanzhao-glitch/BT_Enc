@@ -283,6 +283,11 @@ async def run(
     device_name: str,
     reply_timeout: float,
 ) -> int:
+    new_conn_Wifi = "mammotion5G"
+    new_conn_Wifi_password = "mammotion888."
+    new_wifi: list[str] = []
+    added_wifi: list[str] = []
+    init_equals_target = False
     client = BluetoothSecureClient(device_name=device_name)
 
     if not await client.search_device(timeout=10):
@@ -315,6 +320,12 @@ async def run(
             logger.warning("query_local_connect no matched protobuf response within %.1fs", reply_timeout)
         else:
             logger.debug("init_conn_wifi: %r", init_conn_wifi)
+            if init_conn_wifi == new_conn_Wifi:
+                logger.debug("init_conn_wifi: %r is equal to new_conn_Wifi: %r", init_conn_wifi,new_conn_Wifi)
+                init_equals_target = True
+                init_disconnect_wifi_rsp = await disconnect_wifi(client,new_conn_Wifi,timeout=reply_timeout)
+                init_forget_added_wifi_rsp = await forget_added_wifi(client,new_conn_Wifi,timeout=reply_timeout)
+                init_equals_target = True
         #扫描周围wifi网络
         raw_new_wifi = await query_wifi_list(client, timeout=reply_timeout)
         if raw_new_wifi is None:
@@ -328,8 +339,6 @@ async def run(
         else:
             new_wifi = [wifi.ssid for wifi in raw_new_wifi] if raw_new_wifi else []
             logger.debug("new_wifi: %r", new_wifi)
-        new_conn_Wifi = "mammotion2.4G"
-        new_conn_Wifi_password = "mammotion888."
         #检查连接wifi是否在已添加的wifi网络并连接
         if new_conn_Wifi in new_wifi:
             logger.debug("new_conn_Wifi %s is in scanned wifi", new_conn_Wifi)
@@ -398,8 +407,13 @@ async def run(
             return 8
         #恢复原有wifi连接
         if init_conn_wifi is not None:
-            logger.debug("init_conn_wifi %s is in init_conn_wifi", init_conn_wifi)
-            reconnect_wifi = await connect_added_wifi(client,init_conn_wifi,timeout=reply_timeout)
+            if init_equals_target:
+                logger.debug("init_conn_wifi %s is equal to new_conn_Wifi %s, need to reconnect", init_conn_wifi, new_conn_Wifi)
+                reconnect_wifi = await connect_new_wifi(client,init_conn_wifi,new_conn_Wifi_password,timeout=reply_timeout)
+
+            else:
+                logger.debug("init_conn_wifi %s is not equal to new_conn_Wifi %s, need to reconnect", init_conn_wifi, new_conn_Wifi)
+                reconnect_wifi = await connect_added_wifi(client,init_conn_wifi,timeout=reply_timeout)
             if reconnect_wifi is None:
                 logger.debug("connect_added_wifi no matched protobuf response within %.1fs", reply_timeout)
                 # heartbeat = build_ble_sync_request(sync_value=2)
@@ -428,7 +442,6 @@ def main() -> None:
             )
         )
     )
-
 
 if __name__ == "__main__":
     main()

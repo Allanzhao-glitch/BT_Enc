@@ -234,7 +234,7 @@ class EncryptionProtocol:
         if isinstance(hex_ciphertext, bytes):
             hex_ciphertext = hex_ciphertext.decode("ascii")
         ciphertext = bytes.fromhex(hex_ciphertext)
-        print(f"解密输入ciphertext: {ciphertext}")
+        # print(f"解密输入ciphertext: {ciphertext}")
         cipher = Cipher(algorithms.AES(self.STATIC_KEY), modes.CBC(self.STATIC_IV), backend=default_backend())
         decryptor = cipher.decryptor()
 
@@ -570,7 +570,7 @@ class BluetoothCryptoClient:
             # 解密服务器公钥
             # 注意: C服务器发送的data字段本身就是hex字符串(ASCII编码)
             # 所以直接使用,不需要再次hex编码
-            print(f"服务器响应data字段(ASCII): {packet.data}")
+            # print(f"服务器响应data字段(ASCII): {packet.data}")
             server_public_key = self.crypto.aes256_cbc_decrypt(packet.data)
             logger.info(f"服务器公钥server_public_key: {server_public_key}")
             self.crypto.peer_public_key = server_public_key
